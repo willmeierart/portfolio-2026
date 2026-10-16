@@ -1,0 +1,40 @@
+.app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.app__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: none;
+  background: #ffffff;
+}
+
+.app__loading,
+.app__error {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  font: 500 0.95rem/1.4 'IBM Plex Mono', ui-monospace, monospace;
+  color: #333;
+  background: #ffffff;
+  pointer-events: none;
+}
+
+.app__error {
+  color: #a11;
+  padding: 2rem;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app__canvas {
+    cursor: auto;
+  }
+}

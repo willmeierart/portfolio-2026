@@ -1,0 +1,6 @@
+{
+  "description": "Exclude prepared cell ids or source ids from the published set. Add entries after reviewing contact sheets.",
+  "sourceIds": [],
+  "cellIds": [],
+  "notes": "Tattoo-heavy sources: add their sourceId here for v1 exclusion."
+}

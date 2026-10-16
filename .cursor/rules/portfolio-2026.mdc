@@ -1,0 +1,28 @@
+---
+description: Portfolio 2026 project constraints and collaboration rules
+alwaysApply: true
+---
+
+# Portfolio 2026
+
+## Do not assume — ask
+
+When a choice changes look, architecture, published content, or interaction, ask before implementing. Do not silently invent typography, copy, name/links, crop policy, or effect parameters as "final."
+
+## Never ship AI artifacts
+
+- Do not commit or deploy `portfolio_cursor_plan.md`, chat dumps, agent notes, or hidden plan files.
+- Keep working notes under gitignored `notes/` only.
+
+## Assets stay out of git
+
+- Never commit `sample_imgs/`, `assets/originals/`, or `assets/prepared/` atlases.
+- Prepared media for production goes to CDN/Blob/R2; the Vercel app is `site/` only.
+
+## Phase gates
+
+- Prefer a runnable visual slice over infrastructure sprawl.
+- Stationary grid language: cells stay fixed; content changes in place (not tile strafing).
+- Organization (what goes where), transition (how cells morph), and atmosphere (haze/halo) stay separately tunable.
+- Identity/UI is readable HTML/CSS independent of shaders.
+- No sound in v1. No CMS, auth, or cloud ML embeddings unless explicitly requested.

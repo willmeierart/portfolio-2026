@@ -1,0 +1,36 @@
+# Local image archives (never commit)
+sample_imgs/
+assets/
+assets/originals/
+assets/prepared/
+site/public/prepared/
+
+# AI / agent working docs (never ship)
+portfolio_cursor_plan.md
+notes/
+*.plan.md
+.cursor/plans/
+
+# Dependencies & envs
+node_modules/
+site/node_modules/
+pipeline/.venv/
+pipeline/venv/
+.env
+.env.*
+!.env.example
+
+# Build / tooling
+site/dist/
+site/.vercel/
+.DS_Store
+*.pyc
+__pycache__/
+.pytest_cache/
+.pnpm-store/
+*.log
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
