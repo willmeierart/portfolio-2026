@@ -24,6 +24,7 @@ uniform sampler2D uFluid;
 uniform sampler2D uVelocity;
 uniform float uTime;
 uniform vec2 uGrid;
+uniform vec2 uView;
 uniform vec2 uPad;
 uniform vec2 uFocusPan;
 uniform vec2 uResolution;
@@ -36,15 +37,41 @@ uniform float uInk;
 uniform float uSoft;
 uniform float uFloor;
 uniform float uTile;
-uniform sampler2D uTileFrom;
-uniform sampler2D uTileTo;
-uniform float uTileMix;
-uniform vec2 uSphere;
+uniform float uStage;
+uniform float uBlendMode;
+uniform float uCustom;
+uniform float uDiscCover;
+uniform float uFocus;
+uniform float uNameOn;
+uniform sampler2D uNamePlate;
+uniform vec3 uNameAvg;
+uniform vec3 uNamePop;
+uniform vec2 uNameSpan;
+uniform sampler2D uKlein;
 varying vec2 vUv;
 
+vec3 applyBlend(vec3 base, vec3 src) {
+  // Custom: the bottle photo stays the picture. Lighten only brightens it on the
+  // white page; exclusion is a thin tint on the black page.
+  if (uCustom > 0.5) {
+    if (uStage > 0.5) {
+      vec3 excl = src + base - 2.0 * src * base;
+      return mix(src, excl, 0.22);
+    }
+    return mix(src, max(src, base), 0.35);
+  }
+  if (uBlendMode < 0.5) return max(base, src);
+  if (uBlendMode < 1.5) return abs(base - src);
+  if (uBlendMode < 2.5) return vec3(1.0) - (vec3(1.0) - base) * (vec3(1.0) - src);
+  if (uBlendMode < 3.5) return base * src;
+  return base + src - 2.0 * base * src;
+}
+
+// uGrid is whole atlas cells; uView is how many square cells the screen spans
+// (fractional). The view is centred, so partial cells sit evenly at both edges.
 vec2 atlasMap(vec2 screenUv) {
   vec2 atlas = uGrid + uPad * 2.0;
-  return (uPad + screenUv * uGrid) / atlas;
+  return (uPad + (uGrid - uView) * 0.5 + screenUv * uView) / atlas;
 }
 
 // The atlas only changes under the white (hidden-cell swaps) or through one slow,
@@ -58,22 +85,6 @@ vec3 sampleAtlas(vec2 uv) {
     if (f > 0.5) a = mix(a, texture2D(uBlend, uv).rgb, uMix);
   }
   return a;
-}
-
-// Soften the sphere picture. It is magnified across the view, so a small gaussian
-// in texture space keeps the blown-up edges from sparkling.
-vec3 blurTile(sampler2D tex, vec2 uv) {
-  vec2 s = vec2(2.4 / 256.0);
-  vec3 c = texture2D(tex, uv).rgb * 0.250;
-  c += texture2D(tex, uv + vec2(s.x, 0.0)).rgb * 0.125;
-  c += texture2D(tex, uv - vec2(s.x, 0.0)).rgb * 0.125;
-  c += texture2D(tex, uv + vec2(0.0, s.y)).rgb * 0.125;
-  c += texture2D(tex, uv - vec2(0.0, s.y)).rgb * 0.125;
-  c += texture2D(tex, uv + s).rgb * 0.0625;
-  c += texture2D(tex, uv - s).rgb * 0.0625;
-  c += texture2D(tex, uv + vec2(s.x, -s.y)).rgb * 0.0625;
-  c += texture2D(tex, uv + vec2(-s.x, s.y)).rgb * 0.0625;
-  return c;
 }
 
 void main() {
@@ -130,13 +141,13 @@ void main() {
   float edge = 4.0 * mask * (1.0 - mask);
 
   // ---- carry the picture with the flow (strongest at the boundary) ---
-  float cell = 1.0 / max(uGrid.x, uGrid.y);
+  float cell = 1.0 / max(uView.x, uView.y);
   vec2 push = grad * (0.9 * uDistort) + vdir * (0.55 * cell * uDistort);
   push *= 0.25 + 0.75 * min(1.0, edge * 1.6 + ink);
   float pl = length(push);
   float maxPush = cell * 0.7;
   if (pl > maxPush) push *= maxPush / pl;
-  vec2 pushAtlas = push * (uGrid / atlas);
+  vec2 pushAtlas = push * (uView / atlas);
 
   vec2 uvW = clamp(base - pushAtlas, lo, hi);
   vec3 col = sampleAtlas(uvW) * 0.4;
@@ -148,28 +159,48 @@ void main() {
   vec3 sharp = sampleAtlas(clamp(base, lo, hi));
   vec3 img = mix(sharp, col, clamp(edge * 1.2 + ink * 0.35, 0.0, 1.0));
 
-  // Inside a sphere that covers the view. uSphere rolls it; the settled picture is on
-  // the inside and eases into the next settled picture.
-  vec3 background = vec3(1.0);
+  // uStage 1: the grid stays up, and the bottle blends over it.
+  // uStage 0: the page is white, and that composite lives only inside the cursor.
+  // The orb itself stays one cell wide. While the pointer is moving, a soft halo
+  // around it also hides the bottle overlay; uFocus grows that halo with speed.
+  // The long tails stay blended. Once settled, uDiscCover eases back to 1 and the
+  // overlay covers the orb again.
+  vec3 revealed = img;
+  vec3 outside = vec3(1.0);
   if (uTile > 0.5) {
-    vec2 ndc = vUv * 2.0 - 1.0;
-    float aspect = uResolution.x / max(uResolution.y, 1.0);
-    vec3 rd = normalize(vec3(ndc.x * aspect, ndc.y, -1.35));
-    float yaw = uSphere.x;
-    float pitch = uSphere.y;
-    float cy = cos(yaw);
-    float sy = sin(yaw);
-    float cp = cos(pitch);
-    float sp = sin(pitch);
-    rd = vec3(cy * rd.x + sy * rd.z, rd.y, -sy * rd.x + cy * rd.z);
-    rd = vec3(rd.x, cp * rd.y - sp * rd.z, sp * rd.y + cp * rd.z);
-    float lon = atan(rd.x, -rd.z);
-    float lat = asin(clamp(rd.y, -1.0, 1.0));
-    vec2 local = vec2(lon * 1.65, lat * 2.4) + 0.5;
-    background = mix(blurTile(uTileFrom, local), blurTile(uTileTo, local), uTileMix);
+    vec3 mixed = applyBlend(img, texture2D(uKlein, vUv).rgb);
+    float disc = 1.0 - smoothstep(0.42 * lens, 1.08 * lens, dist);
+    float reach = lens * (1.15 + uFocus * 2.6);
+    float haloBleed = 1.0 - smoothstep(0.7 * lens, reach, dist);
+    float pierce = max(disc, haloBleed * smoothstep(0.08, 0.55, uFocus)) * (1.0 - uDiscCover);
+    revealed = mix(mixed, img, pierce);
+    outside = uStage > 0.5 ? mixed : vec3(1.0);
   }
+  vec3 color = mix(revealed, outside, 1.0 - mask);
 
-  gl_FragColor = vec4(mix(img, background, 1.0 - mask), 1.0);
+  // The name runs upward from the photo's average to its most saturated color.
+  // A thin ring just outside the strokes is a clear window onto the photograph.
+  if (uNameOn > 0.5) {
+    float glyph = texture2D(uNamePlate, vUv).r;
+    float fill = smoothstep(0.2, 0.8, glyph);
+    vec2 px = 1.6 / uResolution;
+    float neigh = glyph;
+    neigh = max(neigh, texture2D(uNamePlate, vUv + vec2(px.x, 0.0)).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv - vec2(px.x, 0.0)).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv + vec2(0.0, px.y)).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv - vec2(0.0, px.y)).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv + px).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv - px).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv + vec2(px.x, -px.y)).r);
+    neigh = max(neigh, texture2D(uNamePlate, vUv + vec2(-px.x, px.y)).r);
+    float outline = smoothstep(0.2, 0.8, neigh) * (1.0 - fill);
+    float covered = smoothstep(0.18, 0.5, mask);
+    float t = clamp((vUv.y - uNameSpan.x) / max(uNameSpan.y - uNameSpan.x, 1e-4), 0.0, 1.0);
+    vec3 inkColor = mix(uNameAvg, uNamePop, t);
+    color = mix(inkColor, color, max(1.0 - fill, covered));
+    color = mix(color, sharp, outline);
+  }
+  gl_FragColor = vec4(color, 1.0);
 }
 `
 
@@ -184,6 +215,7 @@ export const visibilityFrag = /* glsl */ `
 precision highp float;
 uniform sampler2D uFluid;
 uniform vec2 uGrid;
+uniform vec2 uView;
 uniform vec2 uPad;
 uniform vec2 uFocusPan;
 uniform vec2 uResolution;
@@ -197,7 +229,7 @@ varying vec2 vUv;
 void main() {
   vec2 atlas = uGrid + uPad * 2.0;
   // screen position of this atlas sample (inverse of the display shader's atlasMap)
-  vec2 s = (vUv * atlas - uPad) / uGrid - uFocusPan;
+  vec2 s = (vUv * atlas - uPad - (uGrid - uView) * 0.5) / uView - uFocusPan;
 
   float onScreen = step(0.0, s.x) * step(s.x, 1.0) * step(0.0, s.y) * step(s.y, 1.0);
 

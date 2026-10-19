@@ -7,24 +7,21 @@ export type CellFeatures = {
 }
 
 export type ManifestItem = {
+  /** Content hash; the cell file is `cells/<id>.webp` (or `cells-<px>/` for a smaller size). */
   id: string
-  sourceId: string
-  cellIndex: number
-  sourceFile: string
-  crop: [number, number, number, number]
-  asset: string
+  /** Position in the manifest, which is also the picture's slot in the preview file. */
+  index: number
   features: CellFeatures
-  excluded?: boolean
 }
 
 export type Manifest = {
-  datasetVersion: number
+  version: number
   cellSize: number
-  sourceCount: number
-  cellCount: number
-  excludedCount: number
+  /** Published cell sizes in px, largest first; `cellSize` is always one of them. */
+  sizes: number[]
   items: ManifestItem[]
-  failures?: { path: string; error: string }[]
+  /** One ThumbHash per item, `stride` bytes each, in manifest order. */
+  thumbs: { url: string; stride: number } | null
 }
 
 export type FeatureKey = keyof CellFeatures

@@ -55,9 +55,18 @@
   text-anchor: end;
 }
 
+.identity__name-white {
+  fill: #fff;
+}
+
+.identity__link-text.is-on {
+  font-weight: 700;
+  text-decoration:  underline;
+}
+
 .identity__link-white {
   fill: #fff;
-  opacity: 0;
+  opacity: 0.25;
   transition: opacity 140ms ease-out;
 }
 
@@ -79,5 +88,9 @@
 @media (prefers-reduced-motion: reduce) {
   .identity {
     animation: none;
+  }
+  .identity__link-white {
+    transition: none;
+    opacity: 0.25;
   }
 }

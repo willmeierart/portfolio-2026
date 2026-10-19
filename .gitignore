@@ -7,6 +7,7 @@ site/public/prepared/
 
 # AI / agent working docs (never ship)
 portfolio_cursor_plan.md
+DEPLOY.md
 notes/
 *.plan.md
 .cursor/plans/

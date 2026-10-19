@@ -106,6 +106,19 @@ function paletteTarget(wx: number, wy: number, ph: number): [number, number, num
 }
 
 /**
+ * `ideal` is what the full set wants in each cell; it is what gets downloaded.
+ * `shown` is what can be painted now: the best candidate whose photo has arrived,
+ * or the ideal (as its blurred preview) when none has.
+ */
+export type Pick = { ideal: ManifestItem[]; shown: ManifestItem[] }
+
+/** True once an item's photo is here (by manifest index). */
+export type Readiness = (index: number) => boolean
+
+/** True when a picture's download failed, so a cell must take a different one. */
+export type Missing = (index: number) => boolean
+
+/**
  * Deterministic world: cell (gx, gy) always resolves to the same image for a
  * given palette phase. Each cell takes the best of K hashed candidates drawn
  * from the WHOLE archive, so a viewport is varied but regionally coherent, and
@@ -127,23 +140,147 @@ export function sampleWorldPalette(
    * same pick again).
    */
   epoch = 0,
-): ManifestItem[] {
+  ready?: Readiness,
+  missing?: Missing,
+): Pick {
   const n = items.length
-  const out: ManifestItem[] = new Array(cols * rows)
-  if (n === 0) return out
+  const cells = cols * rows
+  const out: ManifestItem[] = new Array(cells)
+  if (n === 0) return { ideal: out, shown: out }
   const pts = index.pts
   const ph = phase * 0.35
   const salt = epoch * 1013
+  const kCount = Math.max(1, candidates)
 
+  // Every cell offers its K nearest hashed pictures. Closest claims are
+  // granted first, and a picture already used in this matrix is skipped,
+  // so the view never shows the same image twice while the archive allows it.
+  const pairN = cells * kCount
+  const dist = new Float32Array(pairN)
+  const cellOf = new Uint16Array(pairN)
+  const itemOf = new Uint32Array(pairN)
+  const order = new Uint32Array(pairN)
+  let p = 0
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
+      const cell = y * cols + x
       const gx = Math.floor(originX) + x
       const gy = Math.floor(originY) + y
       const [tx, ty, tz] = paletteTarget(gx, gy, ph)
-      let best = 0
-      let bestD = Infinity
-      for (let k = 0; k < candidates; k++) {
+      for (let k = 0; k < kCount; k++) {
         const i = hash3(gx, gy, k + 1 + salt) % n
+        const dx = pts[i * 3] - tx
+        const dy = pts[i * 3 + 1] - ty
+        const dz = pts[i * 3 + 2] - tz
+        dist[p] = dx * dx + dy * dy + dz * dz
+        cellOf[p] = cell
+        itemOf[p] = i
+        order[p] = p
+        p++
+      }
+    }
+  }
+  order.sort((a, b) => dist[a] - dist[b] || cellOf[a] - cellOf[b] || itemOf[a] - itemOf[b])
+
+  const cellTaken = new Uint8Array(cells)
+  const usedIds = new Set<string>()
+  let filled = 0
+  for (let s = 0; s < pairN && filled < cells; s++) {
+    const pi = order[s]
+    const cell = cellOf[pi]
+    if (cellTaken[cell]) continue
+    const item = items[itemOf[pi]]
+    if (!item || usedIds.has(item.id) || missing?.(item.index)) continue
+    cellTaken[cell] = 1
+    usedIds.add(item.id)
+    out[cell] = item
+    filled++
+  }
+
+  const nearestUnused = (cell: number, allowUsed: boolean): ManifestItem | undefined => {
+    const x = cell % cols
+    const y = (cell / cols) | 0
+    const gx = Math.floor(originX) + x
+    const gy = Math.floor(originY) + y
+    const [tx, ty, tz] = paletteTarget(gx, gy, ph)
+    let best = -1
+    let bestD = Infinity
+    for (let i = 0; i < n; i++) {
+      if (missing?.(i)) continue
+      if (!allowUsed && usedIds.has(items[i].id)) continue
+      const dx = pts[i * 3] - tx
+      const dy = pts[i * 3 + 1] - ty
+      const dz = pts[i * 3 + 2] - tz
+      const d = dx * dx + dy * dy + dz * dz
+      if (d < bestD) {
+        bestD = d
+        best = i
+      }
+    }
+    return best >= 0 ? items[best] : undefined
+  }
+
+  if (filled < cells && usedIds.size < n) {
+    for (let cell = 0; cell < cells && filled < cells; cell++) {
+      if (cellTaken[cell]) continue
+      const item = nearestUnused(cell, false)
+      if (!item) break
+      cellTaken[cell] = 1
+      usedIds.add(item.id)
+      out[cell] = item
+      filled++
+    }
+  }
+  // Fewer unique pictures than cells: only then may one repeat.
+  for (let cell = 0; cell < cells; cell++) {
+    if (cellTaken[cell]) continue
+    const item = nearestUnused(cell, true)
+    if (item) out[cell] = item
+  }
+  if (!ready) return { ideal: out, shown: out }
+
+  // Same claims in the same order, restricted to pictures that have arrived.
+  const shown: ManifestItem[] = new Array(cells)
+  const shownTaken = new Uint8Array(cells)
+  const shownUsed = new Uint8Array(n)
+  let shownFilled = 0
+  for (let s = 0; s < pairN && shownFilled < cells; s++) {
+    const pi = order[s]
+    const cell = cellOf[pi]
+    if (shownTaken[cell]) continue
+    const i = itemOf[pi]
+    if (shownUsed[i] || !ready(i)) continue
+    shownTaken[cell] = 1
+    shownUsed[i] = 1
+    shown[cell] = items[i]
+    shownFilled++
+  }
+  // No candidate has arrived: the cell waits on its ideal, painted as a preview.
+  // A picture that failed to download is skipped, so the cell waits on another one.
+  const blocked = (i: number) => shownUsed[i] || !!missing?.(i)
+  for (let cell = 0; cell < cells; cell++) {
+    if (shownTaken[cell]) continue
+    let pick: ManifestItem | undefined = out[cell]
+    if (pick && blocked(pick.index)) {
+      pick = undefined
+      for (let k = 0; k < kCount; k++) {
+        const i = itemOf[cell * kCount + k]
+        if (!blocked(i)) {
+          pick = items[i]
+          break
+        }
+      }
+    }
+    if (!pick) {
+      const x = cell % cols
+      const y = (cell / cols) | 0
+      const gx = Math.floor(originX) + x
+      const gy = Math.floor(originY) + y
+      const [tx, ty, tz] = paletteTarget(gx, gy, ph)
+      let best = -1
+      let bestD = Infinity
+      for (let i = 0; i < n; i++) {
+        if (blocked(i)) continue
         const dx = pts[i * 3] - tx
         const dy = pts[i * 3 + 1] - ty
         const dz = pts[i * 3 + 2] - tz
@@ -153,14 +290,20 @@ export function sampleWorldPalette(
           best = i
         }
       }
-      out[y * cols + x] = items[best]
+      if (best >= 0) pick = items[best]
     }
+    pick ??= out[cell]
+    if (!pick) continue
+    shownUsed[pick.index] = 1
+    shown[cell] = pick
   }
-  return out
+  return { ideal: out, shown }
 }
 
 /**
- * Unique viewport from a pre-sorted field (used by the debug sort modes).
+ * Unique viewport from a pre-sorted field (used by the sort modes). A cell whose
+ * pick hasn't arrived shows the nearest arrived neighbour in the field instead,
+ * which is close in that feature by construction.
  */
 export function sampleInfiniteField(
   field: ManifestItem[],
@@ -168,29 +311,54 @@ export function sampleInfiniteField(
   rows: number,
   originX: number,
   originY: number,
-  _twist = 0,
-): { items: ManifestItem[]; panX: number; panY: number } {
+  ready?: Readiness,
+  missing?: Missing,
+): Pick {
   const n = field.length
   const out: ManifestItem[] = new Array(cols * rows)
-  if (n === 0) return { items: out, panX: 0, panY: 0 }
+  if (n === 0) return { ideal: out, shown: out }
 
   const ox = Math.floor(originX)
   const oy = Math.floor(originY)
-  const panX = originX - ox
-  const panY = originY - oy
   const used = new Set<string>()
+  const start = new Int32Array(cols * rows)
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       let i = mod((ox + x) * 31 + (oy + y) * 47, n)
       let hops = 0
-      while (used.has(field[i].id) && hops++ < n) i = (i + 1) % n
+      while ((used.has(field[i].id) || !!missing?.(field[i].index)) && hops++ < n) i = (i + 1) % n
       used.add(field[i].id)
       out[y * cols + x] = field[i]
+      start[y * cols + x] = i
     }
   }
+  if (!ready) return { ideal: out, shown: out }
 
-  return { items: out, panX, panY }
+  const reach = Math.min(n, 32)
+  const shown: ManifestItem[] = new Array(cols * rows)
+  const shownUsed = new Set<string>()
+  for (let cell = 0; cell < out.length; cell++) {
+    let pick: ManifestItem | undefined
+    for (let h = 0; h < reach && !pick; h++) {
+      const it = field[(start[cell] + h) % n]
+      if (!shownUsed.has(it.id) && ready(it.index)) pick = it
+    }
+    if (!pick) {
+      const ideal = out[cell]
+      if (ideal && !shownUsed.has(ideal.id) && !missing?.(ideal.index)) pick = ideal
+    }
+    if (!pick) {
+      for (let h = 1; h < n && !pick; h++) {
+        const it = field[(start[cell] + h) % n]
+        if (!shownUsed.has(it.id) && !missing?.(it.index)) pick = it
+      }
+    }
+    pick ??= out[cell]
+    shownUsed.add(pick.id)
+    shown[cell] = pick
+  }
+  return { ideal: out, shown }
 }
 
 export function assignSpatial(

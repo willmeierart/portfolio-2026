@@ -18,10 +18,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python inspect_archive.py ../sample_imgs
-python prepare_archive.py ../sample_imgs \
-  --out ../assets/prepared \
-  --size 128 \
-  --also-copy-to ../site/public/prepared
+python prepare_archive.py ../sample_imgs --out ../assets/prepared
+python publish.py   # → assets/publish/ and site/public/prepared/
 
 # 2) Run the site
 cd ../site
@@ -33,13 +31,13 @@ Open http://127.0.0.1:5173 — move the pointer to reorganize; click or press En
 
 ## Tattoo / content exclusion
 
-Edit `pipeline/denylist.json` (`sourceIds` / `cellIds`), then re-run `prepare_archive.py`.
+Edit `pipeline/denylist.json` (`sourceIds` / `cellIds`), then re-run `publish.py`.
 
 ## Vercel + CDN
 
 - Vercel project root: `site/`
 - Do **not** commit `site/public/prepared/`
-- Upload `assets/prepared/` to Blob/R2/S3 and set `VITE_ASSETS_BASE` (see `site/.env.example` and `site/scripts/upload-prepared.md`)
+- Upload `assets/publish/` to R2 (with a CORS rule for the site's origin) and set `VITE_ASSETS_BASE` (see `site/.env.example` and `site/scripts/upload-prepared.md`)
 
 ## Cursor rules
 
